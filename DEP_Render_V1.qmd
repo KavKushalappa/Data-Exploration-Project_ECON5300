@@ -1,0 +1,186 @@
+---
+title: "Data Exploration Project - ECON5300"
+format: docx
+editor: visual
+---
+
+02/22/26
+Kavya Kushalappa
+---
+
+## Data Exploration Project - WalMart
+
+**The Data:**
+
+The CSV file Walmart_Sales.csv contains data on sales at 45 Walmart stores from February 2010 through October 2012.
+
+**The Analysis:**
+
+Temperatures have been changing over time. In the short term, Wal-Mart is curious whether this might harm its sales.
+
+**Defining the research question:**\
+
+**Do higher environmental/ambient temperatures causally affect weekly sales at Walmart stores?\
+** The unit of observation on this dataset is Store-Week. Each row represents weekly sales for a single Walmart store in that given week.\
+
+We use store fixed effects to control for time-invariant differences across stores. Since each store appears in the data for multiple weeks, we can study how sales change within a store over time and control for time-related patterns in the analysis.
+
+**Possible confounders in the Data.\
+
+Analysis Approach:**
+
+Many factors besides temperature can influence weekly sales, such as seasonal shopping patterns, holidays, salary cycles people may be on, personal economic conditions, and geographic economic conditions. If these factors are not accounted for, they could confound the relationship between temperature and sales.
+
+To address this, the analysis focuses on within-store changes over time. Store fixed effects are used to control for characteristics that are constant for each store, such as location or size/footfall. In addition, week fixed effects are included to account for common shocks and seasonal patterns that affect all stores in a given week, such as holidays or nationwide consumer trends.
+
+By comparing the same store across different weeks while holding these factors constant, the analysis aims to isolate only the effect of temperature on weekly sales at Walmart.
+
+```{r}
+
+library(tidyverse)
+library(lubridate)
+library(fixest)
+
+walmart <- read_csv("Walmart_Sales.csv")
+walmart <- walmart %>%
+  mutate(
+    Date = dmy(Date),
+    week = as.factor(Date)
+  )
+```
+
+```{r}
+
+library(ggplot2)
+
+ggplot(walmart, aes(x = Temperature, y = Weekly_Sales)) +
+  geom_point(alpha = 0.2) +
+  geom_smooth(method = "loess", se = FALSE) +
+  labs(
+    title = "Weekly Sales and Temperature",
+    x = "Average Weekly Temperature (°F)",
+    y = "Weekly Sales"
+  )
+
+```
+
+Exploratory relationship: Sales vs Temperature
+
+In the above scatter plot:
+
+-   Each dot/circle represents a store-week, store sales in a given week, across all stores and weeks
+
+-   X axis - Average weekly temperature
+
+-   Y axis - Weekly sales
+
+-   We see that sales are very spread out
+
+-    The blue line in is a smoothed line and implies a non-linear pattern
+
+-   The relationship appears noisy with a variation in sales at all temperature levels. The non-linear pattern suggests that sales increase as temperatures rise from lower levels and then flatten or decline slightly at higher temperatures. However, this figure does not control for seasonal effects, store-specific characteristics, geographic economic patterns, or other factors that may influence sales.
+
+**Functional Form and Variable Transformation**
+
+Weekly sales are measured in dollars and show large variation across stores. Logging sales could allow interpretation in percentage terms and potentially reduce heteroskedasticity. However, because this analysis includes store fixed effects and clusters standard errors at the store level, and because the residual patterns did not indicate severe heteroskedasticity, I proceed using sales in levels for ease of business interpretation. The estimated coefficients can therefore be directly interpreted in dollar terms.
+
+Model 1: OLS
+
+```{r}
+m1 <- feols(Weekly_Sales ~ Temperature, data = walmart)
+summary(m1)
+
+```
+
+**Baseline Regression**
+
+Code on R : m1 \<- feols(Weekly_Sales \~ Temperature, data = walmart) summary(m1)
+
+To start with, we estimate a simple regression of weekly sales on temperature without including any additional controls. The results show a negative and statistically significant association between temperature and weekly sales. Here, a one-degree increase in temperature is associated with approximately \$1,950 lower weekly sales.
+
+However, this model does not account for store-specific characteristics, seasonal patterns, or other factors(variables) that may influence sales. As a result, the estimated relationship likely reflects confounding factors, hence we cannot yet explicitly identify causal effect. This implies the use of a more detailed regression model with fixed effects and control variables.
+
+The R-squared (model fit) of 0.39% solidifies the argument for better controls.
+\
+Model 2: Fixed Effects + controls\
+
+```{r}
+m2 <- feols(
+  Weekly_Sales ~ Temperature + Fuel_Price + CPI + Unemployment + Holiday_Flag |
+    Store + week,
+  data = walmart,
+  cluster = "Store"
+)
+summary(m2)
+```
+
+This model Controls for:
+
+-   Store fixed effects - 45 stores
+
+-   Week fixed effects - 143 weeks
+
+-   Includes economic controls for Fuel Price, CPI, Unemployment
+
+Controlling for store characteristics, week-specific factors, and economic conditions, a one-degree Fahrenheit increase in temperature is associated with approximately \$1,611 higher weekly sales at a given store. We notice that the sign on sales \$ is now +ve, because since we controlled for Week fixed effects, we likely removed seasonality. After Store fixed effects, we likely controlled for store differences. Holiday_Flag is omitted due to perfect collinearity with week fixed effects, since holiday weeks are already captured by the week indicators.\
+
+After controlling for week fixed effects, holiday status does not appear to independently explain additional variation.\
+
+The within R² of 0.02 suggests that temperature and economic controls explain only a small fraction of within-store variation in weekly sales, reinforcing that temperature is not a dominant driver.\
+
+
+**Model 3: Fixed Effects + controls + Temp² (Testing for Non-Liner Regression):**
+
+```{r}
+avg_sales_week <- walmart %>%
+  group_by(Date) %>%
+  summarise(
+    avg_weekly_sales = mean(Weekly_Sales)
+  )
+ggplot(avg_sales_week, aes(x = Date, y = avg_weekly_sales)) +
+  geom_line(color = "Darkgreen") +
+  labs(
+    title = "Average Weekly Sales Over Time",
+    x = "Week",
+    y = "Average Weekly Sales"
+  )
+```
+
+**Testing for a Nonlinear Relationship\
+**
+
+```{r}
+m3 <- feols(
+  Weekly_Sales ~ Temperature + I(Temperature^2) + Fuel_Price + CPI + Unemployment |
+    Store + week,
+  data = walmart,
+  cluster = "Store"
+)
+summary(m3)
+```
+
+Because the scatterplot suggested curvature, I estimate a quadratic specification including a squared temperature term. Both the linear and squared temperature terms are statistically significant. The squared term is negative, indicating a concave (inverted U-shaped) relationship between temperature and weekly sales.
+
+Using the estimated coefficients, the turning point occurs at approximately 74°F. This implies that the marginal effect of temperature on sales is positive below 74°F and negative above 74°F. In other words, weekly sales increase as temperatures rise up to around 74°F, but begin to decline at higher temperatures. This suggests that moderate warmth boosts sales, while extreme heat may reduce consumer activity.
+
+Returning to the research question, temperature has a nonlinear causal effect on weekly sales. After controlling for store-specific characteristics, week-specific shocks, and economic conditions, warmer temperatures increase sales up to approximately 74°F. Beyond this point, additional increases in temperature reduce weekly sales. This suggests that moderate warmth boosts consumer activity, while extreme heat dampens it.
+
+For comparison, we check whether weekly sales follow strong patterns over time that are unrelated to temperature. To ensure that temperature is not simply capturing seasonal patterns, we examine how weekly sales change over time independent of weather.
+
+This plot shows the average weekly sales across all stores over time. The figure reveals strong seasonal patterns, with sharp spikes in sales during certain weeks that likely correspond to major holidays or peak shopping periods. These obvious time-sensitive variations suggest that factors common to all stores in a given week play a significant role in determining sales. This provides stronger proof for including week fixed effects in the regression analysis to account for seasonality and other common time shocks.\
+
+Broad Interpretation and Research Question
+
+The goal of this analysis was to determine if ambient temperature has a causal effect on weekly sales at Walmart stores. While a simple regression suggested a negative relationship between temperature and sales, further analysis revealed that this result was driven by seasonal and time-specific factors. After controlling for store-level differences and common weekly shocks using fixed effects, higher temperatures were associated with higher weekly sales.
+
+This indicates that, within the same store and week, warmer temperatures tend to modestly increase sales. Together, the exploratory plots and regression results suggest that temperature does affect sales, but only after controlling for seasonal and economic factors. \
+
+**Executive Summary and Business Implications**\
+
+This analysis examined whether ambient (environmental) temperature affects weekly sales at Walmart stores. At first glance, simple comparisons suggested that higher temperatures were associated with lower sales. However, this relationship was misleading because it reflected strong seasonal and holiday-driven patterns rather than the effect of temperature itself.
+
+After controlling for differences between stores and for weekly factors that affect all stores simultaneously, like holidays, seasonal shopping behaviour, and nationwide trends, the results tell a different story.
+
+Within the same store and the same week, higher temperatures are associated with modestly higher weekly sales. Specifically, a one-degree increase in temperature corresponds to an increase of roughly \$1,600 in weekly sales at a store.
+
+From a business perspective, this suggests that warmer weather can provide a small boost in footfalls and, in turn, sales, but temperature alone is not a dominant driver of weekly performance. Large fluctuations in sales are primarily driven by time, seasonality, and major shopping periods rather than weather conditions. As a result, while weather may be useful for short-term planning or staffing adjustments, strategic decisions should continue to focus on broader seasonal trends and economic conditions rather than temperature in isolation.
